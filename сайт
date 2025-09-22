@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberXGames</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, query, orderBy, addDoc, getDocs, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Глобальные переменные, предоставляемые средой Canvas
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Инициализация Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const videoUrlInput = document.getElementById('youtube-url');
+            const addVideoBtn = document.getElementById('add-video-btn');
+            const videoGrid = document.getElementById('video-grid');
+            const userIdDisplay = document.getElementById('user-id');
+            const loadingIndicator = document.getElementById('loading-indicator');
+
+            let userId = null;
+
+            // Функция для создания карточки видео
+            function createVideoCard(videoData, docId) {
+                const videoUrl = videoData.url;
+                let videoId = null;
+
+                try {
+                    const url = new URL(videoUrl);
+                    if (url.hostname === 'www.youtube.com' || url.hostname === 'youtube.com') {
+                        const params = new URLSearchParams(url.search);
+                        if (params.has('v')) {
+                            videoId = params.get('v');
+                        }
+                    } else if (url.hostname === 'youtu.be') {
+                        videoId = url.pathname.substring(1);
+                    }
+                } catch (e) {
+                    console.error('Invalid URL:', e);
+                    return null;
+                }
+
+                if (!videoId) {
+                    console.error('Invalid YouTube URL provided.');
+                    return null;
+                }
+
+                const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+                
+                const videoDiv = document.createElement('div');
+                videoDiv.classList.add('bg-[#2a2a2a]', 'rounded-xl', 'overflow-hidden', 'shadow-xl', 'relative');
+                videoDiv.innerHTML = `
+                    <div class="aspect-w-16 aspect-h-9">
+                        <iframe class="w-full h-full" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold mb-2 text-white">Новое видео</h3>
+                        <p class="text-gray-400 text-sm">Добавлено через форму.</p>
+                    </div>
+                    <button data-doc-id="${docId}" class="delete-video-btn absolute top-2 right-2 p-2 bg-red-600 hover:bg-red-700 text-white rounded-full transition duration-300 ease-in-out">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 11-2 0v6a1 1 0 112 0V8z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                `;
+                return videoDiv;
+            }
+
+            // Слушаем изменения состояния аутентификации
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    userIdDisplay.textContent = `Ваш ID: ${userId}`;
+                    loadingIndicator.classList.add('hidden');
+                    
+                    try {
+                        const videosCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/videos`);
+                        
+                        onSnapshot(videosCollectionRef, (snapshot) => {
+                            videoGrid.innerHTML = '';
+                            snapshot.docs.forEach(doc => {
+                                const videoData = doc.data();
+                                const videoCard = createVideoCard(videoData, doc.id);
+                                if (videoCard) {
+                                    videoGrid.prepend(videoCard);
+                                }
+                            });
+                        });
+                    } catch (e) {
+                        console.error("Ошибка при загрузке видео: ", e);
+                    }
+
+                } else {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        console.error("Ошибка аутентификации: ", e);
+                    }
+                }
+            });
+
+            // Обработчик кнопки добавления видео
+            addVideoBtn.addEventListener('click', async () => {
+                const url = videoUrlInput.value.trim();
+                if (url && userId) {
+                    try {
+                        const videosCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/videos`);
+                        await addDoc(videosCollectionRef, {
+                            url: url,
+                            timestamp: Date.now()
+                        });
+                        videoUrlInput.value = '';
+                    } catch (e) {
+                        console.error("Ошибка при добавлении документа: ", e);
+                    }
+                } else if (!userId) {
+                    console.log("Пожалуйста, подождите, пока пользователь не будет аутентифицирован.");
+                } else {
+                    console.log("Пожалуйста, вставьте корректную ссылку на видео с YouTube.");
+                }
+            });
+
+            // Делегирование событий для кнопок удаления
+            videoGrid.addEventListener('click', async (e) => {
+                const deleteBtn = e.target.closest('.delete-video-btn');
+                if (deleteBtn) {
+                    const docId = deleteBtn.getAttribute('data-doc-id');
+                    if (docId && userId) {
+                        try {
+                            const docRef = doc(db, `artifacts/${appId}/users/${userId}/videos`, docId);
+                            await deleteDoc(docRef);
+                        } catch (e) {
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .header-bg {
+            background-image: url('https://placehold.co/1920x600/1e1e1e/d3d3d3?text=Игровой+Канал');
+            background-size: cover;
+            background-position: center;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <header class="header-bg text-white py-12 md:py-24 rounded-b-3xl">
+        <div class="container mx-auto px-4 text-center">
+            <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight drop-shadow-lg">
+                CyberXGames
+            </h1>
+            <p class="mt-4 text-lg md:text-xl font-medium drop-shadow-md">
+                Добро пожаловать в мир захватывающих приключений!
+            </p>
+            <p id="user-id" class="mt-2 text-sm text-gray-400 font-mono"></p>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-12">
+
+        <section id="about" class="mb-20">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-8 text-orange-400">О нас</h2>
+            <div class="bg-[#2a2a2a] rounded-xl p-8 shadow-xl">
+                <p class="text-center text-lg leading-relaxed">
+                    Мы — команда энтузиастов, которые любят игры и создают контент для таких же, как мы. 
+                    На нашем канале вы найдете обзоры, стримы и прохождения любимых игр. 
+                    Присоединяйтесь к нам, чтобы весело провести время и вместе исследовать новые миры!
+                </p>
+            </div>
+        </section>
+
+        <section id="videos" class="mb-20">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-8 text-orange-400">Последние видео</h2>
+            
+            <div id="loading-indicator" class="text-center text-lg text-gray-400">Загрузка видео...</div>
+
+            <div id="video-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Видео будут загружаться сюда из Firestore -->
+            </div>
+            
+            <div class="bg-[#2a2a2a] rounded-xl p-8 shadow-xl mt-8">
+                <h3 class="text-2xl font-bold mb-4 text-center text-orange-400">Добавить новое видео</h3>
+                <div class="flex flex-col md:flex-row gap-4">
+                    <input type="text" id="youtube-url" placeholder="Вставьте URL видео с YouTube" class="flex-grow p-3 rounded-lg bg-[#3a3a3a] text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500" />
+                    <button id="add-video-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-full transition duration-300 ease-in-out">
+                        Добавить
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section id="streams" class="mb-20">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-8 text-orange-400">Расписание стримов</h2>
+            <div class="bg-[#2a2a2a] rounded-xl p-8 shadow-xl">
+                <ul class="space-y-4">
+                    <li class="flex justify-between items-center py-3 px-4 bg-[#3a3a3a] rounded-lg">
+                        <span class="text-lg font-medium">Понедельник</span>
+                        <span class="text-orange-300">20:00 МСК</span>
+                    </li>
+                    <li class="flex justify-between items-center py-3 px-4 bg-[#3a3a3a] rounded-lg">
+                        <span class="text-lg font-medium">Среда</span>
+                        <span class="text-orange-300">21:30 МСК</span>
+                    </li>
+                    <li class="flex justify-between items-center py-3 px-4 bg-[#3a3a3a] rounded-lg">
+                        <span class="text-lg font-medium">Суббота</span>
+                        <span class="text-orange-300">18:00 МСК</span>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="social" class="mb-20">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-8 text-orange-400">Социальные сети</h2>
+            <div class="flex flex-wrap justify-center gap-6">
+                <a href="https://www.youtube.com/" target="_blank" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full transition duration-300 ease-in-out shadow-lg">YouTube</a>
+                <a href="https://www.twitch.tv/" target="_blank" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-full transition duration-300 ease-in-out shadow-lg">Twitch</a>
+                <a href="https://discord.com/" target="_blank" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full transition duration-300 ease-in-out shadow-lg">Discord</a>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-[#0f0f0f] py-8 text-center rounded-t-3xl">
+        <p class="text-gray-500 text-sm">
+            © 2024 CyberXGames. Все права защищены.
+        </p>
+    </footer>
+
+</body>
+</html>
